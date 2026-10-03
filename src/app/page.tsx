@@ -73,6 +73,9 @@ export default async function MetricsPage() {
           Couldn&apos;t load metrics: {err instanceof Error ? err.message : "unknown error"}. Check
           DATABASE_URL and that fmly-chores migration 0052 has been applied.
         </p>
+        <a href="/logout" className="mt-4 inline-block font-sans text-sm text-ink/60 underline">
+          Sign out
+        </a>
       </main>
     );
   }

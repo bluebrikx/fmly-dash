@@ -29,6 +29,7 @@ Over **Postgres, as a read-only login** — not the Supabase service key. The `m
 
 ## Security notes
 
+- Sign out / reset the session: open `/logout` (works from any screen, including error pages). Sessions also expire after 12 h; changing `ADMIN_TOKEN` signs everyone out.
 - Sign-in: constant-time token check → httpOnly, `SameSite=Strict` cookie holding `<expiry>.<HMAC>`; sessions last 12 h, expire server-side, and **changing `ADMIN_TOKEN` revokes all of them**. All responses are `no-store`, `noindex`, un-frameable.
 - The sign-in throttle (5 failures / 15 min / address) is **per server instance**. On serverless it is only a speed bump. If you deploy this, also turn on the host's protection (e.g. Vercel Deployment Protection / Firewall rate limiting) — or keep it local.
 - Without `DATABASE_CA` the connection is encrypted but the server isn't authenticated.
