@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  --porcelain: #fffcf6;
+  --porcelain-dim: #f6efe2;
+  --ink: #241c15;
+  --ink-soft: #4a3f32;
+  --diner-red: #c2372b;
+  --mustard: #e0a526;
+}
+
+@theme inline {
+  --color-porcelain: var(--porcelain);
+  --color-porcelain-dim: var(--porcelain-dim);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-diner-red: var(--diner-red);
+  --color-mustard: var(--mustard);
+  --font-display: var(--font-alfa-slab);
+  --font-marker: var(--font-permanent-marker);
+  --font-sans: var(--font-karla);
+}
+
+body {
+  background: var(--porcelain);
+  color: var(--ink);
+  font-family: var(--font-karla), ui-sans-serif, system-ui, sans-serif;
+}
