@@ -56,7 +56,9 @@ export async function loadMetrics(since: string, errorsSince: string): Promise<M
          from v_upgrade_leads order by last_hit_at desc limit 50`,
     ),
     pool.query(
-      `select route, method, status, hits from http_error_counts where day >= $1`,
+      `select day::text, route, method, status::int, hits::int
+         from http_error_counts where day >= $1
+        order by day desc, hits desc limit 5000`,
       [errorsSince],
     ),
   ]);

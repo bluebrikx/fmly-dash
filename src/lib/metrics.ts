@@ -46,18 +46,102 @@ export function niceMax(value: number): number {
   return 10 * pow;
 }
 
-export type ErrorRow = { route: string; method: string; status: number; hits: number };
+// One row per day/route/method/status, as stored in http_error_counts.
+export type ErrorRow = { day: string; route: string; method: string; status: number; hits: number };
 
-// Collapses per-day rows into one row per route/method/status, busiest first.
-export function aggregateErrors(rows: ErrorRow[]): ErrorRow[] {
-  const map = new Map<string, ErrorRow>();
-  for (const r of rows) {
-    const key = `${r.method} ${r.route} ${r.status}`;
-    const cur = map.get(key);
-    if (cur) cur.hits += r.hits;
-    else map.set(key, { ...r });
+export type ErrorSort = "day" | "hits";
+export type ErrorDir = "asc" | "desc";
+export type ErrorQuery = {
+  route: string; // case-insensitive substring; "" = any
+  method: string; // exact (upper-case); "" = any
+  status: string; // "401", "4xx", "5xx"; "" = any
+  sort: ErrorSort;
+  dir: ErrorDir;
+};
+
+export const DEFAULT_ERROR_QUERY: ErrorQuery = { route: "", method: "", status: "", sort: "day", dir: "desc" };
+
+type Params = Record<string, string | string[] | undefined>;
+
+function first(v: string | string[] | undefined): string {
+  return (Array.isArray(v) ? v[0] : v) ?? "";
+}
+
+// Turns untrusted URL params into a safe ErrorQuery: unknown values fall back to defaults.
+export function parseErrorQuery(params: Params): ErrorQuery {
+  const route = first(params.route).trim().slice(0, 100);
+  const method = first(params.method).trim().toUpperCase();
+  const status = first(params.status).trim().toLowerCase();
+  const sort = first(params.sort);
+  const dir = first(params.dir);
+  return {
+    route,
+    method: /^[A-Z]{1,10}$/.test(method) ? method : "",
+    status: /^([1-5]\d\d|[45]xx)$/.test(status) ? status : "",
+    sort: sort === "hits" ? "hits" : "day",
+    dir: dir === "asc" ? "asc" : "desc",
+  };
+}
+
+// Choices for the filter dropdowns, from the rows actually present.
+export function errorFilterOptions(rows: ErrorRow[]): { methods: string[]; statuses: number[] } {
+  return {
+    methods: [...new Set(rows.map((r) => r.method))].sort(),
+    statuses: [...new Set(rows.map((r) => r.status))].sort((a, b) => a - b),
+  };
+}
+
+function statusMatches(status: number, filter: string): boolean {
+  if (!filter) return true;
+  if (filter === "4xx") return status >= 400 && status < 500;
+  if (filter === "5xx") return status >= 500 && status < 600;
+  return String(status) === filter;
+}
+
+// Filters, then sorts. Ties always break the same way (hits desc, newest day,
+// route, method, status) so the order is stable between reloads.
+export function applyErrorQuery(rows: ErrorRow[], q: ErrorQuery): ErrorRow[] {
+  const needle = q.route.toLowerCase();
+  const filtered = rows.filter(
+    (r) =>
+      (!needle || r.route.toLowerCase().includes(needle)) &&
+      (!q.method || r.method === q.method) &&
+      statusMatches(r.status, q.status),
+  );
+  const sign = q.dir === "asc" ? 1 : -1;
+  return filtered.sort((a, b) => {
+    const primary = q.sort === "hits" ? a.hits - b.hits : a.day.localeCompare(b.day);
+    if (primary !== 0) return primary * sign;
+    return (
+      b.hits - a.hits ||
+      b.day.localeCompare(a.day) ||
+      a.route.localeCompare(b.route) ||
+      a.method.localeCompare(b.method) ||
+      a.status - b.status
+    );
+  });
+}
+
+// Link target for a column header / form: keeps the current filters, changes
+// only what is passed. Default values are omitted so the plain URL stays "/".
+export function errorQueryHref(q: ErrorQuery, change: Partial<ErrorQuery> = {}): string {
+  const next = { ...q, ...change };
+  const p = new URLSearchParams();
+  if (next.route) p.set("route", next.route);
+  if (next.method) p.set("method", next.method);
+  if (next.status) p.set("status", next.status);
+  if (next.sort !== DEFAULT_ERROR_QUERY.sort || next.dir !== DEFAULT_ERROR_QUERY.dir) {
+    p.set("sort", next.sort);
+    p.set("dir", next.dir);
   }
-  return [...map.values()].sort((a, b) => b.hits - a.hits || a.route.localeCompare(b.route));
+  const qs = p.toString();
+  return qs ? `/?${qs}#api-errors` : "/#api-errors";
+}
+
+// Header click: same column flips direction; a new column starts descending.
+export function nextSort(q: ErrorQuery, column: ErrorSort): Pick<ErrorQuery, "sort" | "dir"> {
+  if (q.sort === column) return { sort: column, dir: q.dir === "desc" ? "asc" : "desc" };
+  return { sort: column, dir: "desc" };
 }
 
 export function average(points: DayPoint[]): number {
