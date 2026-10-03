@@ -18,6 +18,9 @@ export type Lead = {
   kinds: string[];
   members: number;
   active_devices: number;
+  status: string;
+  notes: string | null;
+  invites: number;
 };
 
 export type MetricsData = {
@@ -52,7 +55,8 @@ export async function loadMetrics(since: string, errorsSince: string): Promise<M
       `select household_id::text, tier, subscription_status,
               first_hit_at::text, last_hit_at::text,
               days_hit::int, total_hits::int, kinds::text[] as kinds,
-              members::int, active_devices::int
+              members::int, active_devices::int,
+              status, notes, invites::int
          from v_upgrade_leads order by last_hit_at desc limit 50`,
     ),
     pool.query(
