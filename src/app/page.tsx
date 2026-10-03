@@ -4,12 +4,17 @@ import { notFound } from "next/navigation";
 import { COOKIE_NAME, adminConfigured, isValidSession } from "@/lib/admin-auth";
 import { loadMetrics, type Lead } from "@/lib/queries";
 import {
-  aggregateErrors,
+  applyErrorQuery,
   average,
+  errorFilterOptions,
+  errorQueryHref,
   fillDays,
   lastDays,
+  nextSort,
+  parseErrorQuery,
   toDayMap,
   utcDayKey,
+  type ErrorSort,
 } from "@/lib/metrics";
 import { BarChart } from "./bar-chart";
 import { LoginForm } from "./login-form";
@@ -44,7 +49,11 @@ function ago(iso: string): string {
   return `${Math.round(mins / 1440)}d ago`;
 }
 
-export default async function MetricsPage() {
+export default async function MetricsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   if (!adminConfigured()) notFound();
 
   const session = (await cookies()).get(COOKIE_NAME)?.value;
@@ -86,7 +95,10 @@ export default async function MetricsPage() {
   const activePoints = fillDays(days, toDayMap(activeRows, "active_households"), toDayMap(snapRows, "active_households"));
   const proPoints = fillDays(days, toDayMap(wallRows, "pro_required_households"), toDayMap(snapRows, "pro_required_households"));
   const devicePoints = fillDays(days, toDayMap(wallRows, "device_limit_households"), toDayMap(snapRows, "device_limit_households"));
-  const errorRows = aggregateErrors(data.errors);
+  const errorQuery = parseErrorQuery(await searchParams);
+  const errorOptions = errorFilterOptions(data.errors);
+  const errorRows = applyErrorQuery(data.errors, errorQuery);
+  const errorsFiltered = Boolean(errorQuery.route || errorQuery.method || errorQuery.status);
   const leadRows = data.leads as Lead[];
 
   const todayKey = utcDayKey(today);
@@ -95,6 +107,7 @@ export default async function MetricsPage() {
   const avg7 = average(activePoints.slice(-7));
   const total5xx = errorRows.filter((e) => e.status >= 500).reduce((s, e) => s + e.hits, 0);
   const total4xx = errorRows.filter((e) => e.status < 500).reduce((s, e) => s + e.hits, 0);
+  const sortMark = (col: ErrorSort) => (errorQuery.sort === col ? (errorQuery.dir === "desc" ? " ↓" : " ↑") : "");
 
   return (
     <main className="mx-auto flex max-w-4xl flex-col gap-6 px-5 py-10">
@@ -170,34 +183,110 @@ export default async function MetricsPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border-2 border-ink/20 bg-porcelain p-4">
+      <section id="api-errors" className="rounded-2xl border-2 border-ink/20 bg-porcelain p-4">
         <h2 className="font-marker text-base text-ink">API errors, last 7 days</h2>
         <p className="mb-3 font-sans text-xs text-ink/60">
           {total5xx} server errors (alerted in Slack) · {total4xx} client errors (counted only)
+          {errorsFiltered ? " · filtered" : ""} · {errorRows.length} of {data.errors.length} rows
         </p>
+
+        <form action="/" method="get" className="mb-3 flex flex-wrap items-end gap-3 font-sans text-xs text-ink-soft">
+          <label className="flex flex-col gap-1">
+            Route contains
+            <input
+              name="route"
+              type="text"
+              defaultValue={errorQuery.route}
+              placeholder="/api/sync"
+              maxLength={100}
+              className="w-44 rounded-lg border-2 border-ink px-2 py-1 text-ink"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Method
+            <select name="method" defaultValue={errorQuery.method} className="rounded-lg border-2 border-ink px-2 py-1 text-ink">
+              <option value="">All</option>
+              {errorOptions.methods.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            Status
+            <select name="status" defaultValue={errorQuery.status} className="rounded-lg border-2 border-ink px-2 py-1 text-ink">
+              <option value="">All</option>
+              <option value="4xx">All 4xx</option>
+              <option value="5xx">All 5xx</option>
+              {errorOptions.statuses.map((st) => (
+                <option key={st} value={String(st)}>
+                  {st}
+                </option>
+              ))}
+            </select>
+          </label>
+          <input type="hidden" name="sort" value={errorQuery.sort} />
+          <input type="hidden" name="dir" value={errorQuery.dir} />
+          <button
+            type="submit"
+            className="rounded-lg border-2 border-ink bg-mustard px-3 py-1 font-marker text-sm text-ink transition active:translate-y-0.5"
+          >
+            Apply
+          </button>
+          {errorsFiltered && (
+            <a href={errorQueryHref(errorQuery, { route: "", method: "", status: "" })} className="py-1 underline">
+              Clear filters
+            </a>
+          )}
+        </form>
+
         {errorRows.length === 0 ? (
-          <p className="font-sans text-sm text-ink-soft">No errors recorded.</p>
+          <p className="font-sans text-sm text-ink-soft">
+            {errorsFiltered ? "No errors match these filters." : "No errors recorded."}
+          </p>
         ) : (
           <table className="w-full font-sans text-xs text-ink-soft">
             <thead>
               <tr className="text-left text-ink/60">
-                <th className="py-1 font-normal">Route</th>
-                <th className="py-1 font-normal">Method</th>
-                <th className="py-1 text-right font-normal">Status</th>
-                <th className="py-1 text-right font-normal">Hits</th>
+                <th
+                  className="py-1 pr-3 font-normal"
+                  aria-sort={errorQuery.sort === "day" ? (errorQuery.dir === "desc" ? "descending" : "ascending") : "none"}
+                >
+                  <a href={errorQueryHref(errorQuery, nextSort(errorQuery, "day"))} className="underline">
+                    Date (UTC){sortMark("day")}
+                  </a>
+                </th>
+                <th className="py-1 pr-3 font-normal">Route</th>
+                <th className="py-1 pr-3 font-normal">Method</th>
+                <th className="py-1 pr-3 text-right font-normal">Status</th>
+                <th
+                  className="py-1 text-right font-normal"
+                  aria-sort={errorQuery.sort === "hits" ? (errorQuery.dir === "desc" ? "descending" : "ascending") : "none"}
+                >
+                  <a href={errorQueryHref(errorQuery, nextSort(errorQuery, "hits"))} className="underline">
+                    Errors{sortMark("hits")}
+                  </a>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {errorRows.slice(0, 40).map((e) => (
-                <tr key={`${e.method} ${e.route} ${e.status}`} className="border-t border-ink/10">
-                  <td className="py-1 font-mono">{e.route}</td>
-                  <td className="py-1">{e.method}</td>
-                  <td className="py-1 text-right tabular-nums">{e.status}</td>
+              {errorRows.slice(0, 100).map((e) => (
+                <tr key={`${e.day} ${e.method} ${e.route} ${e.status}`} className="border-t border-ink/10">
+                  <td className="py-1 pr-3 tabular-nums">{e.day}</td>
+                  <td className="py-1 pr-3 font-mono">{e.route}</td>
+                  <td className="py-1 pr-3">{e.method}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums">{e.status}</td>
                   <td className="py-1 text-right tabular-nums">{e.hits}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {errorRows.length > 100 && (
+          <p className="mt-2 font-sans text-xs text-ink/60">
+            Showing the first 100 of {errorRows.length} rows. Narrow the filters to see the rest.
+          </p>
         )}
       </section>
     </main>
