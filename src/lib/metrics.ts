@@ -57,9 +57,14 @@ export type ErrorQuery = {
   status: string; // "401", "4xx", "5xx"; "" = any
   sort: ErrorSort;
   dir: ErrorDir;
+  page: number; // 1-based
 };
 
-export const DEFAULT_ERROR_QUERY: ErrorQuery = { route: "", method: "", status: "", sort: "day", dir: "desc" };
+export const ERROR_PAGE_SIZE = 25;
+export const ERROR_ROW_LIMIT = 5000; // most rows loaded from the database for the table
+const MAX_PAGE = 10_000;
+
+export const DEFAULT_ERROR_QUERY: ErrorQuery = { route: "", method: "", status: "", sort: "day", dir: "desc", page: 1 };
 
 type Params = Record<string, string | string[] | undefined>;
 
@@ -74,12 +79,14 @@ export function parseErrorQuery(params: Params): ErrorQuery {
   const status = first(params.status).trim().toLowerCase();
   const sort = first(params.sort);
   const dir = first(params.dir);
+  const pageNum = /^\d{1,5}$/.test(first(params.page).trim()) ? Number(first(params.page).trim()) : 1;
   return {
     route,
     method: /^[A-Z]{1,10}$/.test(method) ? method : "",
     status: /^([1-5]\d\d|[45]xx)$/.test(status) ? status : "",
     sort: sort === "hits" ? "hits" : "day",
     dir: dir === "asc" ? "asc" : "desc",
+    page: Math.min(Math.max(pageNum, 1), MAX_PAGE),
   };
 }
 
@@ -125,7 +132,8 @@ export function applyErrorQuery(rows: ErrorRow[], q: ErrorQuery): ErrorRow[] {
 // Link target for a column header / form: keeps the current filters, changes
 // only what is passed. Default values are omitted so the plain URL stays "/".
 export function errorQueryHref(q: ErrorQuery, change: Partial<ErrorQuery> = {}): string {
-  const next = { ...q, ...change };
+  // Changing a filter or the sort starts again from page 1; only an explicit page change keeps/moves it.
+  const next = { ...q, ...change, page: "page" in change ? (change.page as number) : 1 };
   const p = new URLSearchParams();
   if (next.route) p.set("route", next.route);
   if (next.method) p.set("method", next.method);
@@ -134,8 +142,36 @@ export function errorQueryHref(q: ErrorQuery, change: Partial<ErrorQuery> = {}):
     p.set("sort", next.sort);
     p.set("dir", next.dir);
   }
+  if (next.page > 1) p.set("page", String(next.page));
   const qs = p.toString();
   return qs ? `/?${qs}#api-errors` : "/#api-errors";
+}
+
+export type ErrorPage<T> = {
+  rows: T[]; // the rows on this page
+  page: number; // 1-based, clamped into range
+  pages: number; // total pages (>= 1)
+  total: number; // rows across all pages
+  from: number; // 1-based index of the first row shown (0 when empty)
+  to: number; // 1-based index of the last row shown (0 when empty)
+};
+
+// Slices one page out of an already filtered+sorted list. A page past the end
+// (e.g. after narrowing a filter while on page 6) is clamped to the last page.
+export function paginate<T>(rows: T[], page: number, size: number = ERROR_PAGE_SIZE): ErrorPage<T> {
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / size));
+  const current = Math.min(Math.max(Math.floor(page) || 1, 1), pages);
+  const start = (current - 1) * size;
+  const slice = rows.slice(start, start + size);
+  return {
+    rows: slice,
+    page: current,
+    pages,
+    total,
+    from: total === 0 ? 0 : start + 1,
+    to: total === 0 ? 0 : start + slice.length,
+  };
 }
 
 // Header click: same column flips direction; a new column starts descending.
