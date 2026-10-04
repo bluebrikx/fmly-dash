@@ -1,5 +1,5 @@
 import { getPool } from "@/lib/db";
-import type { ErrorRow } from "@/lib/metrics";
+import { ERROR_ROW_LIMIT, type ErrorRow } from "@/lib/metrics";
 
 // Plain SELECTs on the ops views from fmly-chores migration 0052 -- the only
 // objects the metrics_reader role can read. Counts are cast to int and days to
@@ -62,8 +62,8 @@ export async function loadMetrics(since: string, errorsSince: string): Promise<M
     pool.query(
       `select day::text, route, method, status::int, hits::int
          from http_error_counts where day >= $1
-        order by day desc, hits desc limit 5000`,
-      [errorsSince],
+        order by day desc, hits desc limit $2`,
+      [errorsSince, ERROR_ROW_LIMIT],
     ),
   ]);
   return {
