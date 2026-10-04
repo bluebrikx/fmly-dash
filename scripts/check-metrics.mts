@@ -8,7 +8,7 @@
 
 import {
   lastDays, fillDays, toDayMap, niceMax, average,
-  parseErrorQuery, applyErrorQuery, errorFilterOptions, errorQueryHref, nextSort, DEFAULT_ERROR_QUERY,
+  parseErrorQuery, applyErrorQuery, errorFilterOptions, errorQueryHref, nextSort, paginate, DEFAULT_ERROR_QUERY, ERROR_PAGE_SIZE,
 } from "../src/lib/metrics.ts";
 
 let failures = 0;
@@ -61,7 +61,7 @@ ck("no match gives empty", applyErrorQuery([...ROWS], { ...Q, route: "nope" }).l
 ck("filtering does not mutate the input order", ROWS[0].day, "2026-10-01");
 ck("filter options", errorFilterOptions(ROWS), { methods: ["GET", "POST"], statuses: [401, 402, 500] });
 ck("parse: defaults for empty params", parseErrorQuery({}), Q);
-ck("parse: valid params", parseErrorQuery({ route: " /api ", method: "post", status: "5XX", sort: "hits", dir: "asc" }), { route: "/api", method: "POST", status: "5xx", sort: "hits", dir: "asc" });
+ck("parse: valid params", parseErrorQuery({ route: " /api ", method: "post", status: "5XX", sort: "hits", dir: "asc" }), { route: "/api", method: "POST", status: "5xx", sort: "hits", dir: "asc", page: 1 });
 ck("parse: junk falls back", parseErrorQuery({ method: "PO ST;", status: "99999", sort: "drop table", dir: "up" }), Q);
 ck("parse: array params use the first value", parseErrorQuery({ status: ["401", "500"] }).status, "401");
 ck("parse: route is capped at 100 chars", parseErrorQuery({ route: "x".repeat(300) }).route.length, 100);
@@ -71,6 +71,32 @@ ck("href omits defaults", errorQueryHref(Q), "/#api-errors");
 ck("href keeps filters and sort", errorQueryHref({ ...Q, route: "/api/x y", status: "4xx" }, { sort: "hits", dir: "asc" }), "/?route=%2Fapi%2Fx+y&status=4xx&sort=hits&dir=asc#api-errors");
 ck("average of empty is 0", average([]), 0);
 ck("average", average([{ day: "a", value: 1 }, { day: "b", value: 2 }]), 1.5);
+
+ck("parse: page defaults to 1", parseErrorQuery({}).page, 1);
+ck("parse: valid page", parseErrorQuery({ page: "3" }).page, 3);
+ck("parse: page 0 falls back to 1", parseErrorQuery({ page: "0" }).page, 1);
+ck("parse: negative/junk page falls back to 1", parseErrorQuery({ page: "-2" }).page, 1);
+ck("parse: non-numeric page falls back to 1", parseErrorQuery({ page: "abc" }).page, 1);
+ck("parse: decimal page falls back to 1", parseErrorQuery({ page: "2.5" }).page, 1);
+ck("parse: huge page is capped", parseErrorQuery({ page: "99999" }).page, 10000);
+ck("parse: absurdly long page falls back to 1", parseErrorQuery({ page: "123456789" }).page, 1);
+const rows60 = Array.from({ length: 60 }, (_, i) => i + 1);
+ck("page size is 25", ERROR_PAGE_SIZE, 25);
+ck("paginate: first page", paginate(rows60, 1).rows.length, 25);
+ck("paginate: first page range", JSON.stringify([paginate(rows60, 1).from, paginate(rows60, 1).to]), "[1,25]");
+ck("paginate: last page is partial", paginate(rows60, 3).rows.length, 10);
+ck("paginate: last page range", JSON.stringify([paginate(rows60, 3).from, paginate(rows60, 3).to]), "[51,60]");
+ck("paginate: page count", paginate(rows60, 1).pages, 3);
+ck("paginate: exact multiple has no empty last page", paginate(rows60.slice(0, 50), 1).pages, 2);
+ck("paginate: page past the end clamps to last", paginate(rows60, 99).page, 3);
+ck("paginate: page below 1 clamps to 1", paginate(rows60, 0).page, 1);
+ck("paginate: empty list is page 1 of 1", JSON.stringify(paginate([], 5)), '{"rows":[],"page":1,"pages":1,"total":0,"from":0,"to":0}');
+ck("paginate: second page starts at row 26", paginate(rows60, 2).rows[0], 26);
+ck("href: page 2 is included", errorQueryHref(Q, { page: 2 }), "/?page=2#api-errors");
+ck("href: page 1 is omitted", errorQueryHref({ ...Q, page: 3 }, { page: 1 }), "/#api-errors");
+ck("href: paging keeps filters and sort", errorQueryHref({ ...Q, route: "sync", sort: "hits", dir: "asc", page: 2 }, { page: 3 }), "/?route=sync&sort=hits&dir=asc&page=3#api-errors");
+ck("href: changing the sort resets to page 1", errorQueryHref({ ...Q, page: 4 }, { sort: "hits", dir: "desc" }), "/?sort=hits&dir=desc#api-errors");
+ck("href: clearing filters resets to page 1", errorQueryHref({ ...Q, route: "x", page: 4 }, { route: "" }), "/#api-errors");
 
 console.log("");
 if (failures > 0) {

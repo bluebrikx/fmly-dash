@@ -11,9 +11,11 @@ import {
   fillDays,
   lastDays,
   nextSort,
+  paginate,
   parseErrorQuery,
   toDayMap,
   utcDayKey,
+  ERROR_ROW_LIMIT,
   type ErrorSort,
 } from "@/lib/metrics";
 import { BarChart } from "./bar-chart";
@@ -98,6 +100,7 @@ export default async function MetricsPage({
   const errorQuery = parseErrorQuery(await searchParams);
   const errorOptions = errorFilterOptions(data.errors);
   const errorRows = applyErrorQuery(data.errors, errorQuery);
+  const errorPage = paginate(errorRows, errorQuery.page);
   const errorsFiltered = Boolean(errorQuery.route || errorQuery.method || errorQuery.status);
   const leadRows = data.leads as Lead[];
 
@@ -195,6 +198,7 @@ export default async function MetricsPage({
         <p className="mb-3 font-sans text-xs text-ink/60">
           {total5xx} server errors (alerted in Slack) · {total4xx} client errors (counted only)
           {errorsFiltered ? " · filtered" : ""} · {errorRows.length} of {data.errors.length} rows
+          {data.errors.length >= ERROR_ROW_LIMIT ? ` (most recent ${ERROR_ROW_LIMIT} loaded)` : ""}
         </p>
 
         <form action="/" method="get" className="mb-3 flex flex-wrap items-end gap-3 font-sans text-xs text-ink-soft">
@@ -278,7 +282,7 @@ export default async function MetricsPage({
               </tr>
             </thead>
             <tbody>
-              {errorRows.slice(0, 100).map((e) => (
+              {errorPage.rows.map((e) => (
                 <tr key={`${e.day} ${e.method} ${e.route} ${e.status}`} className="border-t border-ink/10">
                   <td className="py-1 pr-3 tabular-nums">{e.day}</td>
                   <td className="py-1 pr-3 font-mono">{e.route}</td>
@@ -290,10 +294,35 @@ export default async function MetricsPage({
             </tbody>
           </table>
         )}
-        {errorRows.length > 100 && (
-          <p className="mt-2 font-sans text-xs text-ink/60">
-            Showing the first 100 of {errorRows.length} rows. Narrow the filters to see the rest.
-          </p>
+        {errorRows.length > 0 && (
+          <nav aria-label="Error table pages" className="mt-3 flex flex-wrap items-center justify-between gap-2 font-sans text-xs text-ink-soft">
+            <span>
+              Showing {errorPage.from}–{errorPage.to} of {errorPage.total}
+            </span>
+            <span className="flex items-center gap-3">
+              {errorPage.page > 1 ? (
+                <a href={errorQueryHref(errorQuery, { page: errorPage.page - 1 })} rel="prev" className="underline">
+                  ← Previous
+                </a>
+              ) : (
+                <span className="text-ink/40" aria-disabled="true">
+                  ← Previous
+                </span>
+              )}
+              <span aria-current="page">
+                Page {errorPage.page} of {errorPage.pages}
+              </span>
+              {errorPage.page < errorPage.pages ? (
+                <a href={errorQueryHref(errorQuery, { page: errorPage.page + 1 })} rel="next" className="underline">
+                  Next →
+                </a>
+              ) : (
+                <span className="text-ink/40" aria-disabled="true">
+                  Next →
+                </span>
+              )}
+            </span>
+          </nav>
         )}
       </section>
     </main>
