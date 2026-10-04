@@ -141,18 +141,20 @@ export default async function MetricsPage({
       <section className="rounded-2xl border-2 border-ink/20 bg-porcelain p-4">
         <h2 className="font-marker text-base text-ink">Upgrade leads</h2>
         <p className="mb-3 font-sans text-xs text-ink/60">
-          Households that hit a free-tier wall, most recent first. Look the owner up in Supabase by id.
+          Households that hit a free-tier wall, most recent first. Set Status and Notes in the Supabase table editor (table upgrade_leads); look the owner up there by id. Invites = times an adult copied the invite code or showed the QR.
         </p>
         {leadRows.length === 0 ? (
           <p className="font-sans text-sm text-ink-soft">No wall hits recorded yet.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[40rem] font-sans text-xs text-ink-soft">
+            <table className="w-full min-w-[48rem] font-sans text-xs text-ink-soft">
               <thead>
                 <tr className="text-left text-ink/60">
                   <th className="py-1 pr-3 font-normal">Household</th>
                   <th className="py-1 pr-3 font-normal">Tier</th>
                   <th className="py-1 pr-3 font-normal">Wall</th>
+                  <th className="py-1 pr-3 font-normal">Status</th>
+                  <th className="py-1 text-right font-normal" title="Times an adult copied the invite code or showed the QR">Invites</th>
                   <th className="py-1 text-right font-normal">Days</th>
                   <th className="py-1 text-right font-normal">Hits</th>
                   <th className="py-1 text-right font-normal">Members</th>
@@ -168,6 +170,11 @@ export default async function MetricsPage({
                     </td>
                     <td className="py-1 pr-3">{l.tier === "pro" ? `pro (${l.subscription_status ?? "—"})` : "free"}</td>
                     <td className="py-1 pr-3">{l.kinds.join(", ")}</td>
+                    <td className="py-1 pr-3" title={l.notes ?? undefined}>
+                      {l.status}
+                      {l.notes ? " ✎" : ""}
+                    </td>
+                    <td className="py-1 text-right tabular-nums">{l.invites}</td>
                     <td className="py-1 text-right tabular-nums">{l.days_hit}</td>
                     <td className="py-1 text-right tabular-nums">{l.total_hits}</td>
                     <td className="py-1 text-right tabular-nums">{l.members}</td>
