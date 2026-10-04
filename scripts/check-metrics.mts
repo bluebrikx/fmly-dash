@@ -8,7 +8,7 @@
 
 import {
   lastDays, fillDays, toDayMap, niceMax, average,
-  parseErrorQuery, applyErrorQuery, errorFilterOptions, errorQueryHref, nextSort, paginate, DEFAULT_ERROR_QUERY, ERROR_PAGE_SIZE,
+  parseErrorQuery, applyErrorQuery, errorFilterOptions, errorQueryHref, nextSort, paginate, routeSeries, ROUTE_OTHER_KEY, DEFAULT_ERROR_QUERY, ERROR_PAGE_SIZE,
 } from "../src/lib/metrics.ts";
 
 let failures = 0;
@@ -97,6 +97,28 @@ ck("href: page 1 is omitted", errorQueryHref({ ...Q, page: 3 }, { page: 1 }), "/
 ck("href: paging keeps filters and sort", errorQueryHref({ ...Q, route: "sync", sort: "hits", dir: "asc", page: 2 }, { page: 3 }), "/?route=sync&sort=hits&dir=asc&page=3#api-errors");
 ck("href: changing the sort resets to page 1", errorQueryHref({ ...Q, page: 4 }, { sort: "hits", dir: "desc" }), "/?sort=hits&dir=desc#api-errors");
 ck("href: clearing filters resets to page 1", errorQueryHref({ ...Q, route: "x", page: 4 }, { route: "" }), "/#api-errors");
+
+const D3 = ["2026-10-01", "2026-10-02", "2026-10-03"];
+const SR = [
+  { day: "2026-10-01", route: "/a", method: "POST", status: 401, hits: 2 },
+  { day: "2026-10-01", route: "/a", method: "GET", status: 401, hits: 3 },
+  { day: "2026-10-03", route: "/a", method: "POST", status: 500, hits: 1 },
+  { day: "2026-10-02", route: "/b", method: "POST", status: 401, hits: 9 },
+  { day: "2026-10-02", route: "/c", method: "POST", status: 401, hits: 4 },
+  { day: "2026-10-03", route: "/d", method: "POST", status: 401, hits: 4 },
+  { day: "2026-09-20", route: "/old", method: "POST", status: 401, hits: 99 },
+];
+const rs = routeSeries(SR, D3, 2);
+ck("series: top routes by total, then Other", rs.map((s) => s.key), ["/b", "/a", ROUTE_OTHER_KEY]);
+ck("series: totals", rs.map((s) => s.total), [9, 6, 8]);
+ck("series: rows of the same route/day are summed and zero-filled", rs[1].points.map((p) => p.value), [5, 0, 1]);
+ck("series: Other sums the remaining routes per day", rs[2].points.map((p) => p.value), [0, 4, 4]);
+ck("series: Other is labelled with the route count", rs[2].label, "Other (2 routes)");
+ck("series: rows outside the window are ignored", rs.some((s) => s.key === "/old"), false);
+ck("series: every series has one point per day", rs.every((s) => s.points.length === D3.length), true);
+ck("series: no Other when everything fits", routeSeries(SR, D3, 10).some((s) => s.key === ROUTE_OTHER_KEY), false);
+ck("series: ties break by route name", routeSeries([{ day: "2026-10-01", route: "/z", method: "GET", status: 400, hits: 1 }, { day: "2026-10-01", route: "/m", method: "GET", status: 400, hits: 1 }], ["2026-10-01"], 5).map((s) => s.key), ["/m", "/z"]);
+ck("series: empty input gives no series", routeSeries([], D3, 5).length, 0);
 
 console.log("");
 if (failures > 0) {

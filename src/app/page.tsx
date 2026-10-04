@@ -13,12 +13,14 @@ import {
   nextSort,
   paginate,
   parseErrorQuery,
+  routeSeries,
   toDayMap,
   utcDayKey,
   ERROR_ROW_LIMIT,
   type ErrorSort,
 } from "@/lib/metrics";
 import { BarChart } from "./bar-chart";
+import { LineChart } from "./line-chart";
 import { LoginForm } from "./login-form";
 import { adminLogout } from "./actions";
 
@@ -101,6 +103,7 @@ export default async function MetricsPage({
   const errorOptions = errorFilterOptions(data.errors);
   const errorRows = applyErrorQuery(data.errors, errorQuery);
   const errorPage = paginate(errorRows, errorQuery.page);
+  const chartSeries = routeSeries(errorRows, lastDays(7, today), 5);
   const errorsFiltered = Boolean(errorQuery.route || errorQuery.method || errorQuery.status);
   const leadRows = data.leads as Lead[];
 
@@ -251,6 +254,14 @@ export default async function MetricsPage({
             </a>
           )}
         </form>
+
+        {chartSeries.length > 0 && (
+          <LineChart
+            title="Errors per day, by route"
+            note="Busiest 5 routes, the rest grouped as Other. Follows the filters above."
+            series={chartSeries}
+          />
+        )}
 
         {errorRows.length === 0 ? (
           <p className="font-sans text-sm text-ink-soft">

@@ -147,6 +147,36 @@ export function errorQueryHref(q: ErrorQuery, change: Partial<ErrorQuery> = {}):
   return qs ? `/?${qs}#api-errors` : "/#api-errors";
 }
 
+export const ROUTE_OTHER_KEY = "__other__";
+export type RouteSeries = { key: string; label: string; total: number; points: DayPoint[] };
+
+// One series per route over the given days (oldest first), for the line chart:
+// errors per day. The busiest `topN` routes (ties broken by route name) get a
+// line each; every remaining route is summed into a final "Other" series, so
+// the chart never needs more hues than the palette has. Days with no rows are 0;
+// rows outside `days` are ignored.
+export function routeSeries(rows: ErrorRow[], days: string[], topN = 5): RouteSeries[] {
+  const inWindow = new Set(days);
+  const perRoute = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    if (!inWindow.has(r.day)) continue;
+    let byDay = perRoute.get(r.route);
+    if (!byDay) perRoute.set(r.route, (byDay = new Map()));
+    byDay.set(r.day, (byDay.get(r.day) ?? 0) + r.hits);
+  }
+  const build = (key: string, label: string, byDay: (day: string) => number): RouteSeries => {
+    const points = days.map((day) => ({ day, value: byDay(day) }));
+    return { key, label, total: points.reduce((sum, p) => sum + p.value, 0), points };
+  };
+  const ranked = [...perRoute.entries()]
+    .map(([route, byDay]) => ({ route, byDay, total: [...byDay.values()].reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.total - a.total || a.route.localeCompare(b.route));
+  const top = ranked.slice(0, topN).map((r) => build(r.route, r.route, (d) => r.byDay.get(d) ?? 0));
+  const rest = ranked.slice(topN);
+  if (rest.length === 0) return top;
+  return [...top, build(ROUTE_OTHER_KEY, `Other (${rest.length} routes)`, (d) => rest.reduce((sum, r) => sum + (r.byDay.get(d) ?? 0), 0))];
+}
+
 export type ErrorPage<T> = {
   rows: T[]; // the rows on this page
   page: number; // 1-based, clamped into range
