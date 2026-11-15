@@ -2,11 +2,11 @@
 
 Isolated operator dashboard for [Fmly.Club](https://github.com/bluebrikx/chores). It is a separate app on purpose: no code, deploy or login is shared with the customer-facing app.
 
-It shows active households per day, how many households hit the free-tier walls (402 `pro_required`, 420 `device_limit` = upgrade leads), a leads table, and API error counts. Days are UTC. Household ids only — no emails.
+It shows active households per day, how many households hit the free-tier walls (402 `pro_required`, 420 `device_limit` = upgrade leads), a leads table, invites sent per day with the invites-to-joins conversion, and API error counts. Days are UTC. Household ids only — no emails.
 
 ## How it reads data
 
-Over **Postgres, as a read-only login** — not the Supabase service key. The `metrics_reader` role (created by fmly-chores migration `0052_ops_metrics.sql`) can `select` only these relations: `v_daily_active_households`, `v_daily_wall_events`, `v_upgrade_leads`, `daily_metrics`, `http_error_counts`. It cannot read `households`, `members`, emails, PIN hashes or chore content, and cannot write anything.
+Over **Postgres, as a read-only login** — not the Supabase service key. The `metrics_reader` role (created by fmly-chores migration `0052_ops_metrics.sql`) can `select` only these relations: `v_daily_active_households`, `v_daily_wall_events`, `v_upgrade_leads`, `daily_metrics`, `http_error_counts`. It cannot read `households`, `members`, emails, PIN hashes or chore content, and cannot write anything. A later fmly-chores migration adds `invites_sent` and `invite_joins` to `daily_metrics`; the Invites panel detects those columns at request time and shows "not available yet" until that migration is applied, so the dashboard keeps working unmodified on a database that does not have it yet. Any database error is logged server-side only and never rendered to the page.
 
 ## Setup
 
@@ -21,6 +21,8 @@ Over **Postgres, as a read-only login** — not the Supabase service key. The `m
    - `DATABASE_CA` — recommended: the project's CA certificate (Database → SSL), so the connection is verified.
    - `ADMIN_TOKEN` — `openssl rand -base64 32` (≥ 32 chars; shorter or unset = every page 404s).
 4. `npm install && npm run dev` → http://localhost:3100
+
+Invite metrics stay hidden (the panel shows "not available yet") until the fmly-chores migration that adds them is applied to the Supabase project. No extra setup is needed here once it is - the dashboard picks up `invites_sent` / `invite_joins` automatically on the next request.
 
 ### Where does `ADMIN_TOKEN` live?
 

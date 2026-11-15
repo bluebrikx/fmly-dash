@@ -9,7 +9,9 @@
 import {
   lastDays, fillDays, toDayMap, niceMax, average,
   parseErrorQuery, applyErrorQuery, errorFilterOptions, errorQueryHref, nextSort, paginate, routeSeries, ROUTE_OTHER_KEY, DEFAULT_ERROR_QUERY, ERROR_PAGE_SIZE,
+  conversionPct, formatPct, summariseInvites, type InviteDayRow,
 } from "../src/lib/metrics.ts";
+import { loadInviteMetrics, type QueryablePool } from "../src/lib/queries.ts";
 
 let failures = 0;
 let checks = 0;
@@ -119,6 +121,108 @@ ck("series: every series has one point per day", rs.every((s) => s.points.length
 ck("series: no Other when everything fits", routeSeries(SR, D3, 10).some((s) => s.key === ROUTE_OTHER_KEY), false);
 ck("series: ties break by route name", routeSeries([{ day: "2026-10-01", route: "/z", method: "GET", status: 400, hits: 1 }, { day: "2026-10-01", route: "/m", method: "GET", status: 400, hits: 1 }], ["2026-10-01"], 5).map((s) => s.key), ["/m", "/z"]);
 ck("series: empty input gives no series", routeSeries([], D3, 5).length, 0);
+
+// Invite metrics (chores migration 0082, issue #179): daily invites_sent /
+// invite_joins trend plus the invites -> joins conversion ratio.
+ck("conversionPct: zero sent and zero joins is n/a (no denominator)", conversionPct(0, 0), null);
+ck("conversionPct: zero sent but some joins is still n/a", conversionPct(0, 5), null);
+ck("conversionPct: whole number result", conversionPct(12, 3), 25);
+ck("conversionPct: rounds to 1dp", conversionPct(3, 1), 33.3);
+ck("conversionPct: negative sent is treated as no denominator", conversionPct(-1, 2), null);
+ck("formatPct: null is n/a", formatPct(null), "n/a");
+ck("formatPct: number gets a percent sign", formatPct(25), "25%");
+ck("formatPct: 1dp value keeps its decimal", formatPct(33.3), "33.3%");
+
+const INVITE_DAYS = ["2026-10-01", "2026-10-02", "2026-10-03"];
+const INVITE_ROWS: InviteDayRow[] = [
+  { day: "2026-10-01", invites_sent: 4, invite_joins: 1 },
+  { day: "2026-10-03", invites_sent: 8, invite_joins: 2 },
+];
+const summary = summariseInvites(INVITE_ROWS, INVITE_DAYS);
+ck("summariseInvites: zero-fills missing days (sent)", summary.sent.map((p) => p.value), [4, 0, 8]);
+ck("summariseInvites: zero-fills missing days (joins)", summary.joins.map((p) => p.value), [1, 0, 2]);
+ck("summariseInvites: sums the trailing window (sent7)", summary.sent7, 12);
+ck("summariseInvites: sums the trailing window (joins7)", summary.joins7, 3);
+ck("summariseInvites: pct7 matches conversionPct(sent7, joins7)", summary.pct7, conversionPct(12, 3));
+
+const EMPTY_SUMMARY = summariseInvites([], INVITE_DAYS);
+ck("summariseInvites: no rows gives all-zero points", EMPTY_SUMMARY.sent.map((p) => p.value), [0, 0, 0]);
+ck("summariseInvites: no rows gives pct7 of null", EMPTY_SUMMARY.pct7, null);
+
+// pg returns bigint/numeric columns as strings -- summariseInvites must coerce
+// them via toDayMap rather than propagate strings into arithmetic.
+const STRING_ROWS = [
+  { day: "2026-10-01", invites_sent: "4", invite_joins: "1" },
+  { day: "2026-10-03", invites_sent: "8", invite_joins: "2" },
+] as unknown as InviteDayRow[];
+const stringSummary = summariseInvites(STRING_ROWS, INVITE_DAYS);
+ck("summariseInvites: coerces string-typed numerics (sent)", stringSummary.sent.map((p) => p.value), [4, 0, 8]);
+ck("summariseInvites: coerces string-typed numerics (joins7)", stringSummary.joins7, 3);
+ck("summariseInvites: coerces string-typed numerics (pct7)", stringSummary.pct7, 25);
+
+// loadInviteMetrics must never reject, on ANY failure (not only a
+// missing-column error), and must log server-side rather than throw. Fake
+// pools below stand in for pg so this runs without a database.
+// Builds a QueryablePool from a plain (text) => rows function; the cast is
+// only to satisfy pg's generic query<T> signature, the fakes below never
+// return anything but plain row arrays.
+function fakePool(respond: (text: string) => Record<string, unknown>[]): QueryablePool {
+  return {
+    async query<T extends Record<string, unknown>>(text: string) {
+      return { rows: respond(text) as T[] };
+    },
+  };
+}
+
+const realConsoleError = console.error;
+console.error = () => {}; // the degradation path logs on purpose; keep test output clean
+try {
+  const columnsPresentThenDataQueryFails = fakePool((text) => {
+    if (text.includes("information_schema.columns")) return [{ n: 2 }];
+    throw new Error("simulated non-42703 failure");
+  });
+  ck(
+    "loadInviteMetrics: degrades when the data query throws a non-missing-column error",
+    await loadInviteMetrics("2026-01-01", columnsPresentThenDataQueryFails),
+    { available: false, rows: [] },
+  );
+
+  const precheckThrows = fakePool(() => {
+    throw new Error("connection reset");
+  });
+  ck(
+    "loadInviteMetrics: degrades when the catalog pre-check itself throws",
+    await loadInviteMetrics("2026-01-01", precheckThrows),
+    { available: false, rows: [] },
+  );
+
+  const columnsMissing = fakePool((text) => {
+    if (text.includes("information_schema.columns")) return [{ n: 0 }];
+    throw new Error("should not run the data query when columns are absent");
+  });
+  ck(
+    "loadInviteMetrics: not available when the catalog pre-check finds no columns",
+    await loadInviteMetrics("2026-01-01", columnsMissing),
+    { available: false, rows: [] },
+  );
+
+  const happyPath = fakePool((text) => {
+    if (text.includes("information_schema.columns")) return [{ n: 2 }];
+    return [{ day: "2026-01-02", invites_sent: 3, invite_joins: 1 }];
+  });
+  ck(
+    "loadInviteMetrics: available when the columns exist and the query succeeds",
+    await loadInviteMetrics("2026-01-01", happyPath),
+    { available: true, rows: [{ day: "2026-01-02", invites_sent: 3, invite_joins: 1 }] },
+  );
+
+  ck("loadInviteMetrics: no pool (DATABASE_URL unset) is not available", await loadInviteMetrics("2026-01-01", null), {
+    available: false,
+    rows: [],
+  });
+} finally {
+  console.error = realConsoleError;
+}
 
 console.log("");
 if (failures > 0) {
