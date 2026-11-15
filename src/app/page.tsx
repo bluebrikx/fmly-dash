@@ -9,11 +9,13 @@ import {
   errorFilterOptions,
   errorQueryHref,
   fillDays,
+  formatPct,
   lastDays,
   nextSort,
   paginate,
   parseErrorQuery,
   routeSeries,
+  summariseInvites,
   toDayMap,
   utcDayKey,
   ERROR_ROW_LIMIT,
@@ -79,13 +81,14 @@ export default async function MetricsPage({
   try {
     data = await loadMetrics(since, errorsSince);
   } catch (err) {
+    // Never render the raw driver error: it can carry a host, role or other
+    // connection detail. Log the detail server-side only; the page gets a
+    // generic message.
+    console.error("[metrics] loadMetrics failed:", err instanceof Error ? err.message : err);
     return (
       <main className="mx-auto max-w-2xl px-5 py-16">
         <h1 className="font-display text-3xl text-ink">Metrics</h1>
-        <p className="mt-3 font-sans text-sm text-diner-red">
-          Couldn&apos;t load metrics: {err instanceof Error ? err.message : "unknown error"}. Check
-          DATABASE_URL and that fmly-chores migration 0052 has been applied.
-        </p>
+        <p className="mt-3 font-sans text-sm text-diner-red">Could not load metrics. Check the server log.</p>
         <a href="/logout" className="mt-4 inline-block font-sans text-sm text-ink/60 underline">
           Sign out
         </a>
@@ -106,6 +109,8 @@ export default async function MetricsPage({
   const chartSeries = routeSeries(errorRows, lastDays(7, today), 5);
   const errorsFiltered = Boolean(errorQuery.route || errorQuery.method || errorQuery.status);
   const leadRows = data.leads as Lead[];
+  const invites = data.invites;
+  const inviteSummary = invites.available ? summariseInvites(invites.rows, days) : null;
 
   const todayKey = utcDayKey(today);
   const todayActive = activePoints[activePoints.length - 1].value;
@@ -192,6 +197,34 @@ export default async function MetricsPage({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border-2 border-ink/20 bg-porcelain p-4">
+        <h2 className="font-marker text-base text-ink">Invites</h2>
+        <p className="mb-3 font-sans text-xs text-ink/60">
+          Invites sent (an adult copied the invite code or showed the QR) and approved joins, per day.
+          Lights up once fmly-chores migration 0082 is applied.
+        </p>
+        {!inviteSummary ? (
+          <p className="font-sans text-sm text-ink-soft">
+            Invite metrics are not available yet. Apply chores migration 0082 to populate{" "}
+            <code className="font-mono">daily_metrics.invites_sent</code> and{" "}
+            <code className="font-mono">invite_joins</code>.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Tile label="Invites sent (7d)" value={inviteSummary.sent7} />
+              <Tile label="Approved joins (7d)" value={inviteSummary.joins7} />
+              <Tile label="Conversion (7d)" value={formatPct(inviteSummary.pct7)} note="joins / invites sent" />
+            </div>
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* Hues from the validated categorical palette in line-chart.tsx (COLORS[0], COLORS[2]) -- distinct from mustard/diner-red, checked against the porcelain surface. */}
+              <BarChart title="Invites sent per day" unit="invites" points={inviteSummary.sent} color="#2a78d6" compact />
+              <BarChart title="Approved joins per day" unit="joins" points={inviteSummary.joins} color="#1baf7a" compact />
+            </div>
           </div>
         )}
       </section>
