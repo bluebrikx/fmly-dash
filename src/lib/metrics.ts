@@ -214,3 +214,42 @@ export function average(points: DayPoint[]): number {
   if (points.length === 0) return 0;
   return points.reduce((sum, p) => sum + p.value, 0) / points.length;
 }
+
+// Invite daily metrics (issue #179, chores migration 0082): daily
+// invites_sent / invite_joins trend plus the invites -> joins conversion
+// ratio. Pure and DB-free so it is fully covered by scripts/check-metrics.mts;
+// the "columns don't exist yet" degradation path lives in src/lib/queries.ts.
+export type InviteDayRow = { day: string; invites_sent: number; invite_joins: number };
+
+// 1dp percentage. null when there is no denominator (no invites sent that
+// window) so the UI can show "n/a" instead of a misleading 0%.
+export function conversionPct(sent: number, joins: number): number | null {
+  if (!Number.isFinite(sent) || sent <= 0) return null;
+  if (!Number.isFinite(joins) || joins < 0) return null;
+  return Math.round((joins / sent) * 1000) / 10;
+}
+
+export function formatPct(n: number | null): string {
+  return n === null ? "n/a" : `${n}%`;
+}
+
+export type InviteSummary = {
+  sent: DayPoint[];
+  joins: DayPoint[];
+  sent7: number;
+  joins7: number;
+  pct7: number | null;
+};
+
+// Pure summary for the Invites panel: zero-filled daily points plus the
+// trailing-7-day totals and conversion. toDayMap coerces the pg driver's
+// string-typed bigint/numeric columns, so string fixtures work the same as
+// number fixtures.
+export function summariseInvites(rows: InviteDayRow[], days: string[]): InviteSummary {
+  const sent = fillDays(days, toDayMap(rows, "invites_sent"));
+  const joins = fillDays(days, toDayMap(rows, "invite_joins"));
+  const sum7 = (points: DayPoint[]) => points.slice(-7).reduce((total, p) => total + p.value, 0);
+  const sent7 = sum7(sent);
+  const joins7 = sum7(joins);
+  return { sent, joins, sent7, joins7, pct7: conversionPct(sent7, joins7) };
+}
